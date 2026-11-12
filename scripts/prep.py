@@ -601,6 +601,16 @@ def cmd_status(a):
     wd = a.workdir
     for name in ("map.md", "chapters.json", "digest.md", "digest.html", "rulebook.md"):
         print(f"{name}：{'有' if os.path.isfile(os.path.join(wd, name)) else '无'}")
+    sd = os.path.join(wd, "skill-draft")
+    if os.path.isdir(sd):
+        for x in sorted(os.listdir(sd)):
+            if os.path.isdir(os.path.join(sd, x)):
+                n = len([f for f in os.listdir(os.path.join(sd, x, "references")) if f.endswith(".md")]) if os.path.isdir(os.path.join(sd, x, "references")) else 0
+                print(f"skill 包 {x}：SKILL.md {'有' if os.path.isfile(os.path.join(sd, x, 'SKILL.md')) else '无'}，规则文件 {n} 个")
+    vd = os.path.join(wd, "verify")
+    if os.path.isdir(vd):
+        done = [f for f in ("independent.md", "reader.md", "skill-walkthrough.md", "skill-check.md", "skill-trial.md") if os.path.isfile(os.path.join(vd, f))]
+        print("已做的核对：" + ("、".join(done) if done else "无"))
     notes = [f for f in os.listdir(os.path.join(wd, "notes"))] if os.path.isdir(os.path.join(wd, "notes")) else []
     print(f"底稿文件：{len([n for n in notes if n.endswith('.md')])} 个")
 

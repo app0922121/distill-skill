@@ -9,6 +9,7 @@
   verify.py coverage <工作区>
   verify.py lint     <工作区>
   verify.py all      <工作区>
+  verify.py skill    <工作区> [skill 包目录]   # 查做出来的 skill 包；不写目录就查 skill-draft/ 下唯一的那个
 
 锚的写法：〔p45〕〔p45-47〕〔c3〕〔t12:34〕〔L120〕〔L120-150〕〔ch03〕〔W02〕〔W02:L15〕〔S2:p45〕
 多个锚用逗号或顿号隔开：〔p45、p52〕。只有一份用户材料时，S1: 前缀可省。
@@ -31,7 +32,7 @@ import re
 import sys
 import unicodedata
 
-VERSION = "0.3.1"
+VERSION = "0.4.1"
 ANCHOR_RE = re.compile(r"〔(?!存疑)([^〔〕]{1,120})〕")     # 〔存疑：…〕是存疑标记，不是出处锚
 TOKEN_RE = re.compile(
     r"^(?:(?P<src>[SW]\d+):)?(?:"
@@ -746,14 +747,118 @@ def run_lint(w, rep):
     return hard
 
 
+# ---------- 做出来的 skill 包 ----------
+
+def run_skill(w, args, rep):
+    rep.append("## skill 包\n")
+    if args:
+        d = args[0]
+    else:
+        base = os.path.join(w.wd, "skill-draft")
+        subs = [x for x in sorted(os.listdir(base)) if os.path.isdir(os.path.join(base, x))] if os.path.isdir(base) else []
+        if len(subs) != 1:
+            die("skill-draft/ 下要正好有一个 skill 包目录；有多个时把目录路径写在命令最后。")
+        d = os.path.join(base, subs[0])
+    sk = os.path.join(d, "SKILL.md")
+    if not os.path.isfile(sk):
+        die(f"{d} 里没有 SKILL.md。")
+    hard, raw = 0, open(sk, encoding="utf-8").read()
+    dirname = os.path.basename(os.path.normpath(d))
+
+    def bad(msg):
+        nonlocal hard
+        hard += 1
+        rep.append("✗ " + msg + "\n")
+
+    m = re.match(r"^---\n(.*?)\n---\n", raw, re.S)
+    name = desc = ""
+    if not m:
+        bad("SKILL.md 开头没有用 --- 包起来的 name 和 description。")
+        body = raw
+    else:
+        body = raw[m.end():]
+        nm = re.search(r"^name:\s*(.+)$", m.group(1), re.M)
+        dm = re.search(r"^description:\s*(.+)$", m.group(1), re.M)
+        name = nm.group(1).strip().strip("\"'") if nm else ""
+        desc = dm.group(1).strip().strip("\"'") if dm else ""
+        if not name:
+            bad("缺 name。")
+        elif not re.match(r"^[a-z0-9]+(-[a-z0-9]+)*$", name):
+            bad(f"name「{name}」要用小写英文、数字和连字符。")
+        elif name != dirname:
+            bad(f"name「{name}」和文件夹名「{dirname}」不一致。")
+        if not desc:
+            bad("缺 description（要写在一行里）。")
+        else:
+            if len(desc) > 300:
+                bad(f"description 有 {len(desc)} 字，太长；压到两百字以内。")
+            elif len(desc) > 200:
+                rep.append(f"提醒：description 有 {len(desc)} 字，尽量压到两百字以内。\n")
+            if re.search(r"[我你]", desc):
+                rep.append("提醒：description 里有「我」或「你」，改成不带人称的写法（「处理……」「用户说……时使用」）。\n")
+            if not re.search(r"不用于|不触发|不适用", desc):
+                rep.append("提醒：description 里没有写不触发的情况，容易抢别的 skill 的活。\n")
+    n_lines = body.count("\n") + 1
+    if n_lines > 200:
+        bad(f"SKILL.md 正文 {n_lines} 行，超过两百行；把细节挪进 references/。")
+    refdir = os.path.join(d, "references")
+    refs = sorted(f for f in os.listdir(refdir) if f.endswith(".md")) if os.path.isdir(refdir) else []
+    for sec in ("输出格式", "示例"):
+        if not re.search(r"(?m)^#+\s*.*" + sec, body):
+            rep.append(f"提醒：SKILL.md 里没有「{sec}」一节。没有它，AI 每次回答的结构会不一样。\n")
+    if "原书未说明" in "".join(open(os.path.join(refdir, f), encoding="utf-8").read() for f in refs):
+        rep.append("提醒：规则里有「原书未说明」。原书没写的栏直接省掉整行，不必写出来。\n")
+    if not refs:
+        bad("没有 references/ 下的规则文件。")
+    for f in refs:
+        if f"references/{f}" not in body:
+            bad(f"references/{f} 没有在 SKILL.md 里被提到；写明什么情况下读它。")
+    for path in set(re.findall(r"references/[\w.\-]+\.md", body)):
+        if not os.path.isfile(os.path.join(d, path)):
+            bad(f"SKILL.md 提到了 {path}，但这个文件不存在。")
+    n_rules, files = 0, [sk]
+    for f in refs:
+        fp = os.path.join(refdir, f)
+        files.append(fp)
+        txt = open(fp, encoding="utf-8").read()
+        for path in re.findall(r"references/[\w.\-]+\.md", txt):
+            rep.append(f"提醒：references/{f} 里又指向了 {path}。引用只留一层，改成由 SKILL.md 指路。\n")
+        blocks = re.split(r"(?m)^##\s+", txt)[1:]
+        for b in blocks:
+            title = b.split("\n", 1)[0].strip()
+            if not re.match(r"R\d+", title):
+                continue
+            n_rules += 1
+            if not ANCHOR_RE.search(b):
+                bad(f"references/{f} 的规则「{title}」没有任何出处锚。")
+            for need in ("什么时候用", "怎么做"):
+                if need not in b:
+                    bad(f"references/{f} 的规则「{title}」缺「{need}」。")
+            lines = [l for l in b.split("\n")[1:] if re.match(r"^\s*(-|\d+[.、)])\s+", l) and not l.lstrip().startswith(">")]
+            bare = [l.strip()[:30] for l in lines
+                    if not ANCHOR_RE.search(l) and "未说明" not in l and "依据强度" not in l and "整理者补充" not in l
+                    and not re.match(r"^\s*-\s*\*\*[^*]+\*\*[:：]\s*$", l) and cjk_count(l) >= 8]
+            if bare:
+                bad(f"references/{f} 的规则「{title}」有 {len(bare)} 行没有出处锚（如「{bare[0]}……」）。挂不上锚的内容不进规则。")
+    if refs and n_rules == 0:
+        bad("规则文件里没有找到以「## R01 · 名字」这种形式开头的规则条目。")
+    rep.append(f"skill 包：{dirname}；规则文件 {len(refs)} 个，规则 {n_rules} 条；SKILL.md 正文 {n_lines} 行，description {len(desc)} 字。\n")
+    h, counts = run_quotes(w, files, rep)
+    if not counts:
+        rep.append("（skill 包里没有带引号的原话，引文这一项没有可查的。规则行的出处锚已在上面查过。）\n")
+    return hard + h
+
+
 def main():
     ap = argparse.ArgumentParser(description="distill 机器核对")
-    ap.add_argument("cmd", choices=["quotes", "coverage", "lint", "all"])
+    ap.add_argument("cmd", choices=["quotes", "coverage", "lint", "all", "skill"])
     ap.add_argument("workdir")
     ap.add_argument("files", nargs="*")
     a = ap.parse_args()
     w = Work(a.workdir)
     rep, hard = [f"# 机器核对报告\n\n（distill 脚本版本 {VERSION}）\n"], 0
+    if a.cmd == "skill":
+        hard += run_skill(w, a.files, rep)
     if a.cmd in ("quotes", "all"):
         h, _ = run_quotes(w, a.files, rep)
         hard += h
@@ -762,7 +867,8 @@ def main():
     if a.cmd in ("lint", "all"):
         hard += run_lint(w, rep)
     rep.append(f"**结论：{'必须处理的问题 ' + str(hard) + ' 项' if hard else '机器能查的全部通过'}。**")
-    rep.append("\n机器查不了的：转述是否忠实、归纳是否成立、取舍是否得当。这些要走独立核对。")
+    rep.append("\n机器查不了的：规则是否忠实于原书、照着做能不能走通。这些靠纸面走一遍和试用对比。" if a.cmd == "skill"
+               else "\n机器查不了的：转述是否忠实、归纳是否成立、取舍是否得当。这些要走独立核对。")
     if a.cmd == "all" and not w.chapters:
         rep.append("\n（没有 chapters.json，章节覆盖这一项没有查。）")
     text = "\n".join(rep) + "\n"

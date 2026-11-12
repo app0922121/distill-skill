@@ -199,6 +199,30 @@ def main():
     check("verify 连写的两行引文各算一条", code == 0 and "引文 2 条" in out, out)
     check("verify 留下核对历史", os.path.isfile(os.path.join(w2, "verify", "history.jsonl")))
 
+    # 做出来的 skill 包
+    sd = os.path.join(w2, "skill-draft", "demo-skill")
+    os.makedirs(os.path.join(sd, "references"))
+    open(os.path.join(sd, "SKILL.md"), "w", encoding="utf-8").write(
+        "---\nname: demo-skill\ndescription: 用示例书的方法检查一件事。用户说 帮我检查、按示例书的方法看看 时使用。不用于：只想要摘要。\n---\n\n"
+        "# 示例\n\n## 规则在哪\n| 情况 | 读哪个文件 |\n|---|---|\n| 要检查 | `references/check.md` |\n")
+    good_rule = ("## R01 · 检查第一页\n- **什么时候用**：拿到材料时〔p1〕\n- **怎么做**：\n  1. 读第一页的正文内容〔p1〕\n"
+                 "- **什么时候不要用**：原书未说明\n- **依据强度**：只有原则没有步骤\n")
+    open(os.path.join(sd, "references", "check.md"), "w", encoding="utf-8").write(good_rule)
+    code, out = run("verify.py", "skill", w2)
+    check("verify skill 合格的 skill 包通过", code == 0 and "规则 1 条" in out, out)
+    open(os.path.join(sd, "references", "check.md"), "w", encoding="utf-8").write(
+        good_rule + "## R02 · 没有出处的规则\n- **什么时候用**：任何时候都可以这样做一下\n- **怎么做**：凭感觉判断一下就可以了\n")
+    open(os.path.join(sd, "references", "orphan.md"), "w", encoding="utf-8").write("## R09 · 孤儿\n- **什么时候用**：某时〔p2〕\n- **怎么做**：某事〔p2〕\n")
+    code, out = run("verify.py", "skill", w2)
+    check("verify skill 抓到没有出处的规则", code == 1 and "没有任何出处锚" in out, out)
+    check("verify skill 抓到没被 SKILL.md 提到的规则文件", "orphan.md 没有在 SKILL.md 里被提到" in out, out)
+    os.remove(os.path.join(sd, "references", "orphan.md"))
+    open(os.path.join(sd, "references", "check.md"), "w", encoding="utf-8").write(good_rule)
+    raw = open(os.path.join(sd, "SKILL.md"), encoding="utf-8").read()
+    open(os.path.join(sd, "SKILL.md"), "w", encoding="utf-8").write(raw.replace("name: demo-skill", "name: Demo Skill"))
+    code, out = run("verify.py", "skill", w2)
+    check("verify skill 抓到不合规的 name", code == 1 and "小写英文" in out, out)
+
     print(f"\n共 {len(fails)} 项失败。" if fails else "\n全部通过。")
     sys.exit(1 if fails else 0)
 
